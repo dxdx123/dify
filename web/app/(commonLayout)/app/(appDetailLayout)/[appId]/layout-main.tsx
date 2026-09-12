@@ -1,35 +1,51 @@
 'use client'
 import type { FC } from 'react'
-import { useUnmount } from 'ahooks'
-import React, { useCallback, useEffect, useState } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
-import {
-  RiDashboard2Fill,
-  RiDashboard2Line,
-  RiFileList3Fill,
-  RiFileList3Line,
-  RiTerminalBoxFill,
-  RiTerminalBoxLine,
-  RiTerminalWindowFill,
-  RiTerminalWindowLine,
-} from '@remixicon/react'
+import type { App } from '@/types/app'
+import { cn } from '@langgenius/dify-ui/cn'
+import { useSuspenseQuery } from '@tanstack/react-query'
+import { useAtomValue } from 'jotai'
+import * as React from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
-import { useContextSelector } from 'use-context-selector'
-import s from './style.module.css'
-import cn from '@/utils/classnames'
 import { useStore } from '@/app/components/app/store'
-import AppSideBar from '@/app/components/app-sidebar'
-import type { NavIcon } from '@/app/components/app-sidebar/navLink'
-import { fetchAppDetail, fetchAppSSO } from '@/service/apps'
-import AppContext, { useAppContext } from '@/context/app-context'
 import Loading from '@/app/components/base/loading'
-import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
-import type { App } from '@/types/app'
+import {
+  workspacePermissionKeysAtom,
+  workspacePermissionKeysLoadingAtom,
+} from '@/context/permission-state'
+import { currentWorkspaceAtom, currentWorkspaceLoadingAtom } from '@/context/workspace-state'
+import { userProfileQueryOptions } from '@/features/account-profile/client'
+import { systemFeaturesQueryOptions } from '@/features/system-features/client'
+import useDocumentTitle from '@/hooks/use-document-title'
+import { usePathname, useRouter } from '@/next/navigation'
+import { fetchAppDetailDirect } from '@/service/apps'
+import { AppModeEnum } from '@/types/app'
+import { getRedirectionPath } from '@/utils/app-redirection'
+import { getAppACLCapabilities } from '@/utils/permission'
 
-export type IAppDetailLayoutProps = {
+type IAppDetailLayoutProps = {
   children: React.ReactNode
   appId: string
+}
+
+const isNotFoundError = (error: unknown) =>
+  typeof error === 'object' && error !== null && 'status' in error && error.status === 404
+
+const appDetailPageTitle = (pathname: string, t: ReturnType<typeof useTranslation>['t']) => {
+  if (pathname.endsWith('/workflow') || pathname.endsWith('/configuration'))
+    return t(($) => $['appMenus.promptEng'], { ns: 'common' })
+  if (pathname.endsWith('/access-point'))
+    return t(($) => $['appMenus.accessPoint'], { ns: 'common' })
+  if (pathname.endsWith('/deploy')) return t(($) => $['appMenus.deploy'], { ns: 'common' })
+  if (pathname.endsWith('/logs')) return t(($) => $['appMenus.logs'], { ns: 'common' })
+  if (pathname.endsWith('/annotations'))
+    return t(($) => $['appMenus.annotations'], { ns: 'common' })
+  if (pathname.endsWith('/overview')) return t(($) => $['appMenus.overview'], { ns: 'common' })
+  if (pathname.endsWith('/access-config'))
+    return t(($) => $['settings.resourceAccess'], { ns: 'common' })
+
+  return t(($) => $['menus.appDetail'], { ns: 'common' })
 }
 
 const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
@@ -40,137 +56,191 @@ const AppDetailLayout: FC<IAppDetailLayoutProps> = (props) => {
   const { t } = useTranslation()
   const router = useRouter()
   const pathname = usePathname()
-  const media = useBreakpoints()
-  const isMobile = media === MediaType.mobile
-  const { isCurrentWorkspaceEditor, isLoadingCurrentWorkspace } = useAppContext()
-  const { appDetail, setAppDetail, setAppSiderbarExpand } = useStore(useShallow(state => ({
-    appDetail: state.appDetail,
-    setAppDetail: state.setAppDetail,
-    setAppSiderbarExpand: state.setAppSiderbarExpand,
-  })))
+  const { data: systemFeatures } = useSuspenseQuery(systemFeaturesQueryOptions())
+  const isLoadingCurrentWorkspace = useAtomValue(currentWorkspaceLoadingAtom)
+  const isLoadingWorkspacePermissionKeys = useAtomValue(workspacePermissionKeysLoadingAtom)
+  const currentWorkspace = useAtomValue(currentWorkspaceAtom)
+  const { data: currentUserId } = useSuspenseQuery({
+    ...userProfileQueryOptions(),
+    select: (data) => data.profile.id,
+  })
+  const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
+  const isRbacEnabled = systemFeatures.rbac_enabled
+  const { appDetail, setAppDetail } = useStore(
+    useShallow((state) => ({
+      appDetail: state.appDetail,
+      setAppDetail: state.setAppDetail,
+    })),
+  )
   const [isLoadingAppDetail, setIsLoadingAppDetail] = useState(false)
   const [appDetailRes, setAppDetailRes] = useState<App | null>(null)
-  const [navigation, setNavigation] = useState<Array<{
-    name: string
-    href: string
-    icon: NavIcon
-    selectedIcon: NavIcon
-  }>>([])
-  const systemFeatures = useContextSelector(AppContext, state => state.systemFeatures)
+  const routeAppDetail =
+    appDetail?.id === appId ? appDetail : appDetailRes?.id === appId ? appDetailRes : null
+  const pageTitle = appDetailPageTitle(pathname, t)
+  const appName = routeAppDetail?.id === appId ? routeAppDetail.name : undefined
+  const shouldBlockAgentResourceAccess =
+    routeAppDetail?.mode === AppModeEnum.AGENT && pathname.endsWith('/access-config')
+  const canViewAccessPoint =
+    routeAppDetail?.id === appId &&
+    currentWorkspace.id &&
+    !isLoadingCurrentWorkspace &&
+    !isLoadingWorkspacePermissionKeys &&
+    !isLoadingAppDetail
+      ? getAppACLCapabilities(routeAppDetail.permission_keys, {
+          currentUserId,
+          resourceMaintainer: routeAppDetail.maintainer,
+          workspacePermissionKeys,
+          isRbacEnabled,
+        }).canViewAccessPoint
+      : false
+  const shouldBlockAccessPointAccess = pathname.endsWith('/access-point') && !canViewAccessPoint
 
-  const getNavigations = useCallback((appId: string, isCurrentWorkspaceEditor: boolean, mode: string) => {
-    const navs = [
-      ...(isCurrentWorkspaceEditor
-        ? [{
-          name: t('common.appMenus.promptEng'),
-          href: `/app/${appId}/${(mode === 'workflow' || mode === 'advanced-chat') ? 'workflow' : 'configuration'}`,
-          icon: RiTerminalWindowLine,
-          selectedIcon: RiTerminalWindowFill,
-        }]
-        : []
-      ),
-      {
-        name: t('common.appMenus.apiAccess'),
-        href: `/app/${appId}/develop`,
-        icon: RiTerminalBoxLine,
-        selectedIcon: RiTerminalBoxFill,
-      },
-      ...(isCurrentWorkspaceEditor
-        ? [{
-          name: mode !== 'workflow'
-            ? t('common.appMenus.logAndAnn')
-            : t('common.appMenus.logs'),
-          href: `/app/${appId}/logs`,
-          icon: RiFileList3Line,
-          selectedIcon: RiFileList3Fill,
-        }]
-        : []
-      ),
-      {
-        name: t('common.appMenus.overview'),
-        href: `/app/${appId}/overview`,
-        icon: RiDashboard2Line,
-        selectedIcon: RiDashboard2Fill,
-      },
-    ]
-    return navs
-  }, [])
+  useDocumentTitle(`${pageTitle} · ${appName || t(($) => $['menus.appDetail'], { ns: 'common' })}`)
 
   useEffect(() => {
-    if (appDetail) {
-      document.title = `${(appDetail.name || 'App')} - Dify`
-      const localeMode = localStorage.getItem('app-detail-collapse-or-expand') || 'expand'
-      const mode = isMobile ? 'collapse' : 'expand'
-      setAppSiderbarExpand(isMobile ? mode : localeMode)
-      // TODO: consider screen size and mode
-      // if ((appDetail.mode === 'advanced-chat' || appDetail.mode === 'workflow') && (pathname).endsWith('workflow'))
-      //   setAppSiderbarExpand('collapse')
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appDetail, isMobile])
+    let ignore = false
 
-  useEffect(() => {
-    setAppDetail()
-    setIsLoadingAppDetail(true)
-    fetchAppDetail({ url: '/apps', id: appId }).then((res) => {
-      setAppDetailRes(res)
-    }).catch((e: any) => {
-      if (e.status === 404)
-        router.replace('/apps')
-    }).finally(() => {
-      setIsLoadingAppDetail(false)
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appId, pathname])
-
-  useEffect(() => {
-    if (!appDetailRes || isLoadingCurrentWorkspace || isLoadingAppDetail)
-      return
-    const res = appDetailRes
-    // redirection
-    const canIEditApp = isCurrentWorkspaceEditor
-    if (!canIEditApp && (pathname.endsWith('configuration') || pathname.endsWith('workflow') || pathname.endsWith('logs'))) {
-      router.replace(`/app/${appId}/overview`)
-      return
-    }
-    if ((res.mode === 'workflow' || res.mode === 'advanced-chat') && (pathname).endsWith('configuration')) {
-      router.replace(`/app/${appId}/workflow`)
-    }
-    else if ((res.mode !== 'workflow' && res.mode !== 'advanced-chat') && (pathname).endsWith('workflow')) {
-      router.replace(`/app/${appId}/configuration`)
-    }
-    else {
-      setAppDetail({ ...res, enable_sso: false })
-      setNavigation(getNavigations(appId, isCurrentWorkspaceEditor, res.mode))
-      if (systemFeatures.enable_web_sso_switch_component && canIEditApp) {
-        fetchAppSSO({ appId }).then((ssoRes) => {
-          setAppDetail({ ...res, enable_sso: ssoRes.enabled })
-        })
+    const currentAppDetail = useStore.getState().appDetail
+    if (currentAppDetail?.id === appId) {
+      return () => {
+        ignore = true
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appDetailRes, isCurrentWorkspaceEditor, isLoadingAppDetail, isLoadingCurrentWorkspace, systemFeatures.enable_web_sso_switch_component])
 
-  useUnmount(() => {
     setAppDetail()
-  })
+    void Promise.resolve().then(() => {
+      if (!ignore) setIsLoadingAppDetail(true)
+    })
+    fetchAppDetailDirect({ url: '/apps', id: appId })
+      .then((res: App) => {
+        if (ignore) return
 
-  if (!appDetail) {
-    return (
-      <div className='flex h-full items-center justify-center bg-background-body'>
+        setAppDetailRes(res)
+      })
+      .catch((error: unknown) => {
+        if (ignore) return
+
+        if (isNotFoundError(error)) router.replace('/apps')
+      })
+      .finally(() => {
+        if (ignore) return
+
+        setIsLoadingAppDetail(false)
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [appId, router, setAppDetail])
+
+  useEffect(() => {
+    if (
+      !routeAppDetail ||
+      !currentWorkspace.id ||
+      isLoadingCurrentWorkspace ||
+      isLoadingWorkspacePermissionKeys ||
+      isLoadingAppDetail
+    )
+      return
+    if (routeAppDetail.id !== appId) return
+
+    const appACLCapabilities = getAppACLCapabilities(routeAppDetail.permission_keys, {
+      currentUserId,
+      resourceMaintainer: routeAppDetail.maintainer,
+      workspacePermissionKeys,
+      isRbacEnabled,
+    })
+    const isLayoutPath = pathname.endsWith('configuration') || pathname.endsWith('workflow')
+    const isLogsPath = pathname.endsWith('logs')
+    const isAnnotationsPath = pathname.endsWith('annotations')
+    const isOverviewPath = pathname.endsWith('overview')
+    const isAccessConfigPath = pathname.endsWith('access-config')
+    const isAccessPointPath = pathname.endsWith('access-point')
+    const isDeployPath = pathname.endsWith('deploy')
+    if (
+      (isLayoutPath && !appACLCapabilities.canAccessLayout) ||
+      (isLogsPath && !appACLCapabilities.canAccessLogAndAnnotation) ||
+      (isAnnotationsPath && !appACLCapabilities.canAccessLogAndAnnotation) ||
+      (isOverviewPath && !appACLCapabilities.canMonitor) ||
+      (isAccessConfigPath &&
+        (routeAppDetail.mode === AppModeEnum.AGENT || !appACLCapabilities.canAccessConfig)) ||
+      (isAccessPointPath && !appACLCapabilities.canViewAccessPoint) ||
+      (isDeployPath &&
+        ((routeAppDetail.mode !== AppModeEnum.WORKFLOW &&
+          routeAppDetail.mode !== AppModeEnum.ADVANCED_CHAT) ||
+          !appACLCapabilities.canDeploy))
+    ) {
+      router.replace(
+        getRedirectionPath(routeAppDetail, {
+          currentUserId,
+          resourceMaintainer: routeAppDetail.maintainer,
+          workspacePermissionKeys,
+          isRbacEnabled,
+        }),
+      )
+      return
+    }
+    if (
+      (routeAppDetail.mode === AppModeEnum.WORKFLOW ||
+        routeAppDetail.mode === AppModeEnum.ADVANCED_CHAT) &&
+      pathname.endsWith('configuration')
+    ) {
+      router.replace(`/app/${appId}/workflow`)
+    } else if (
+      routeAppDetail.mode !== AppModeEnum.WORKFLOW &&
+      routeAppDetail.mode !== AppModeEnum.ADVANCED_CHAT &&
+      pathname.endsWith('workflow')
+    ) {
+      router.replace(`/app/${appId}/configuration`)
+      return
+    }
+
+    if (appDetailRes && appDetail?.id !== appDetailRes.id)
+      setAppDetail({ ...appDetailRes, enable_sso: false })
+  }, [
+    appDetail?.id,
+    appDetailRes,
+    appId,
+    currentUserId,
+    currentWorkspace.id,
+    isLoadingAppDetail,
+    isLoadingCurrentWorkspace,
+    isLoadingWorkspacePermissionKeys,
+    isRbacEnabled,
+    pathname,
+    routeAppDetail,
+    router,
+    setAppDetail,
+    workspacePermissionKeys,
+  ])
+
+  const isWorkflowPage = pathname.endsWith('/workflow')
+  const content =
+    !appDetail || shouldBlockAgentResourceAccess || shouldBlockAccessPointAccess ? (
+      <div className="flex min-w-0 grow items-center justify-center bg-background-body">
         <Loading />
       </div>
+    ) : (
+      <div
+        className={cn(
+          'relative flex h-0 min-h-0 min-w-0 grow overflow-hidden',
+          !isWorkflowPage && 'pt-1 pr-1 pb-1',
+        )}
+      >
+        <div
+          className={cn(
+            'min-w-0 grow overflow-hidden bg-components-panel-bg',
+            !isWorkflowPage && 'rounded-lg shadow-xs shadow-shadow-shadow-3',
+          )}
+        >
+          {children}
+        </div>
+      </div>
     )
-  }
 
   return (
-    <div className={cn(s.app, 'relative flex', 'overflow-hidden')}>
-      {appDetail && (
-        <AppSideBar title={appDetail.name} icon={appDetail.icon} icon_background={appDetail.icon_background as string} desc={appDetail.mode} navigation={navigation} />
-      )}
-      <div className="grow overflow-hidden bg-components-panel-bg">
-        {children}
-      </div>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background-body">
+      {content}
     </div>
   )
 }

@@ -1,137 +1,107 @@
 'use client'
 
+import { Checkbox } from '@langgenius/dify-ui/checkbox'
+import { CheckboxGroup } from '@langgenius/dify-ui/checkbox-group'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@langgenius/dify-ui/input-group'
+import { Popover, PopoverContent } from '@langgenius/dify-ui/popover'
 import { useState } from 'react'
-import {
-  RiArrowDownSLine,
-  RiCloseCircleFill,
-  RiFilter3Line,
-} from '@remixicon/react'
-import {
-  PortalToFollowElem,
-  PortalToFollowElemContent,
-  PortalToFollowElemTrigger,
-} from '@/app/components/base/portal-to-follow-elem'
-import Checkbox from '@/app/components/base/checkbox'
-import cn from '@/utils/classnames'
-import Input from '@/app/components/base/input'
+import { useTranslation } from '#i18n'
 import { useTags } from '@/app/components/plugins/hooks'
-import { useMixedTranslation } from '@/app/components/plugins/marketplace/hooks'
+import { markMarketplaceSiteFilter } from '@/utils/marketplace-site-track'
+import MarketplaceTrigger from './trigger/marketplace'
+import ToolSelectorTrigger from './trigger/tool-selector'
 
 type TagsFilterProps = {
   tags: string[]
   onTagsChange: (tags: string[]) => void
-  size: 'small' | 'large'
-  locale?: string
+  usedInMarketplace?: boolean
 }
-const TagsFilter = ({
-  tags,
-  onTagsChange,
-  size,
-  locale,
-}: TagsFilterProps) => {
-  const { t } = useMixedTranslation(locale)
+function TagsFilter({ tags, onTagsChange, usedInMarketplace = false }: TagsFilterProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [searchText, setSearchText] = useState('')
-  const { tags: options, tagsMap } = useTags(t)
-  const filteredOptions = options.filter(option => option.label.toLowerCase().includes(searchText.toLowerCase()))
-  const handleCheck = (id: string) => {
-    if (tags.includes(id))
-      onTagsChange(tags.filter((tag: string) => tag !== id))
-    else
-      onTagsChange([...tags, id])
-  }
+  const { tags: options, tagsMap } = useTags()
+  const filteredOptions = options.filter((option) =>
+    option.label.toLowerCase().includes(searchText.toLowerCase()),
+  )
   const selectedTagsLength = tags.length
+  const handleTagsChange = (nextTags: string[]) => {
+    const addedTag = nextTags.find((tag) => !tags.includes(tag))
+    const removedTag = tags.find((tag) => !nextTags.includes(tag))
+    markMarketplaceSiteFilter({
+      filter_type: 'category',
+      selection_mode: 'multi',
+      filter_value: addedTag ?? removedTag ?? nextTags.at(-1) ?? '',
+      selected_values: nextTags,
+    })
+    onTagsChange(nextTags)
+  }
 
   return (
-    <PortalToFollowElem
-      placement='bottom-start'
-      offset={{
-        mainAxis: 4,
-        crossAxis: -6,
-      }}
-      open={open}
-      onOpenChange={setOpen}
-    >
-      <PortalToFollowElemTrigger
-        className='shrink-0'
-        onClick={() => setOpen(v => !v)}
+    <Popover open={open} onOpenChange={setOpen}>
+      {usedInMarketplace && (
+        <MarketplaceTrigger
+          selectedTagsLength={selectedTagsLength}
+          tags={tags}
+          tagsMap={tagsMap}
+          onTagsChange={handleTagsChange}
+        />
+      )}
+      {!usedInMarketplace && (
+        <ToolSelectorTrigger
+          selectedTagsLength={selectedTagsLength}
+          tags={tags}
+          tagsMap={tagsMap}
+          onTagsChange={handleTagsChange}
+        />
+      )}
+      <PopoverContent
+        placement="bottom-start"
+        sideOffset={4}
+        alignOffset={-6}
+        className="border-none bg-transparent shadow-none"
       >
-        <div className={cn(
-          'flex cursor-pointer items-center rounded-lg text-text-tertiary hover:bg-state-base-hover',
-          size === 'large' && 'h-8 px-2 py-1',
-          size === 'small' && 'h-7 py-0.5 pl-1 pr-1.5 ',
-          selectedTagsLength && 'text-text-secondary',
-          open && 'bg-state-base-hover',
-        )}>
-          <div className='p-0.5'>
-            <RiFilter3Line className='h-4 w-4' />
-          </div>
-          <div className={cn(
-            'system-sm-medium flex items-center p-1',
-            size === 'large' && 'p-1',
-            size === 'small' && 'px-0.5 py-1',
-          )}>
-            {
-              !selectedTagsLength && t('pluginTags.allTags')
-            }
-            {
-              !!selectedTagsLength && tags.map(tag => tagsMap[tag].label).slice(0, 2).join(',')
-            }
-            {
-              selectedTagsLength > 2 && (
-                <div className='system-xs-medium ml-1 text-text-tertiary'>
-                  +{selectedTagsLength - 2}
-                </div>
-              )
-            }
-          </div>
-          {
-            !!selectedTagsLength && (
-              <RiCloseCircleFill
-                className='h-4 w-4 cursor-pointer text-text-quaternary'
-                onClick={() => onTagsChange([])}
+        <div className="w-60 rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg-blur shadow-lg backdrop-blur-xs">
+          <div className="p-2 pb-1">
+            <InputGroup>
+              <InputGroupInput
+                type="search"
+                name="tag-query"
+                autoComplete="off"
+                enterKeyHint="search"
+                aria-label={t(($) => $.searchTags, { ns: 'pluginTags' }) || ''}
+                className="[&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none"
+                value={searchText}
+                onValueChange={setSearchText}
+                placeholder={t(($) => $.searchTags, { ns: 'pluginTags' }) || ''}
               />
-            )
-          }
-          {
-            !selectedTagsLength && (
-              <RiArrowDownSLine className='h-4 w-4' />
-            )
-          }
-        </div>
-      </PortalToFollowElemTrigger>
-      <PortalToFollowElemContent className='z-[1000]'>
-        <div className='w-[240px] rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg-blur shadow-lg'>
-          <div className='p-2 pb-1'>
-            <Input
-              showLeftIcon
-              value={searchText}
-              onChange={e => setSearchText(e.target.value)}
-              placeholder={t('pluginTags.searchTags') || ''}
-            />
+              <InputGroupAddon className="ps-1.75 pe-0.75">
+                <span
+                  aria-hidden
+                  className="i-ri-search-line size-4 text-components-input-text-placeholder"
+                />
+              </InputGroupAddon>
+            </InputGroup>
           </div>
-          <div className='max-h-[448px] overflow-y-auto p-1'>
-            {
-              filteredOptions.map(option => (
-                <div
-                  key={option.name}
-                  className='flex h-7 cursor-pointer items-center rounded-lg px-2 py-1.5 hover:bg-state-base-hover'
-                  onClick={() => handleCheck(option.name)}
-                >
-                  <Checkbox
-                    className='mr-1'
-                    checked={tags.includes(option.name)}
-                  />
-                  <div className='system-sm-medium px-1 text-text-secondary'>
-                    {option.label}
-                  </div>
-                </div>
-              ))
-            }
-          </div>
+          <CheckboxGroup
+            aria-label={t(($) => $.allTags, { ns: 'pluginTags' })}
+            value={tags}
+            onValueChange={handleTagsChange}
+            className="max-h-112 overflow-y-auto p-1"
+          >
+            {filteredOptions.map((option) => (
+              <label
+                key={option.name}
+                className="flex h-7 cursor-pointer items-center rounded-lg px-2 py-1.5 select-none hover:bg-state-base-hover"
+              >
+                <Checkbox className="mr-1" value={option.name} />
+                <div className="px-1 system-sm-medium text-text-secondary">{option.label}</div>
+              </label>
+            ))}
+          </CheckboxGroup>
         </div>
-      </PortalToFollowElemContent>
-    </PortalToFollowElem>
+      </PopoverContent>
+    </Popover>
   )
 }
 

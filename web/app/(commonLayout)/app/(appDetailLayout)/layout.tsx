@@ -1,28 +1,9 @@
-'use client'
-import type { FC } from 'react'
-import React, { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { useAppContext } from '@/context/app-context'
+import type { ReactNode } from 'react'
 
 export type IAppDetail = {
-  children: React.ReactNode
+  children: ReactNode
 }
 
-const AppDetail: FC<IAppDetail> = ({ children }) => {
-  const router = useRouter()
-  const { isCurrentWorkspaceDatasetOperator } = useAppContext()
+const AppDetail = ({ children }: IAppDetail) => children
 
-  useEffect(() => {
-    if (isCurrentWorkspaceDatasetOperator)
-      return router.replace('/datasets')
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCurrentWorkspaceDatasetOperator])
-
-  return (
-    <>
-      {children}
-    </>
-  )
-}
-
-export default React.memo(AppDetail)
+export default AppDetail

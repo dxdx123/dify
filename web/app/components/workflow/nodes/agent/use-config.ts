@@ -1,21 +1,23 @@
-import { useStrategyProviderDetail } from '@/service/use-strategy'
-import useNodeCrud from '../_base/hooks/use-node-crud'
-import useVarList from '../_base/hooks/use-var-list'
-import useOneStepRun from '../_base/hooks/use-one-step-run'
-import type { AgentNodeType } from './types'
-import {
-  useIsChatMode,
-  useNodesReadOnly,
-} from '@/app/components/workflow/hooks'
-import { useCallback, useMemo } from 'react'
-import { type ToolVarInputs, VarType } from '../tool/types'
-import { useCheckInstalled, useFetchPluginsInMarketPlaceByIds } from '@/service/use-plugins'
 import type { Memory, Var } from '../../types'
+import type { ToolVarInputs } from '../tool/types'
+import type { AgentNodeType } from './types'
+import { produce } from 'immer'
+import { useCallback, useEffect, useMemo } from 'react'
+import { FormTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import {
+  generateAgentToolValue,
+  toolParametersToFormSchemas,
+} from '@/app/components/tools/utils/to-form-schema'
+import { useCheckInstalled, useFetchPluginsInMarketPlaceByIds } from '@/service/use-plugins'
+import { useStrategyProviderDetail } from '@/service/use-strategy'
+import { useIsChatMode, useNodesReadOnly } from '../../hooks/use-workflow'
 import { VarType as VarKindType } from '../../types'
 import useAvailableVarList from '../_base/hooks/use-available-var-list'
-import produce from 'immer'
+import useNodeCrud from '../_base/hooks/use-node-crud'
+import useVarList from '../_base/hooks/use-var-list'
+import { VarType } from '../tool/types'
 
-export type StrategyStatus = {
+type StrategyStatus = {
   plugin: {
     source: 'external' | 'marketplace'
     installed: boolean
@@ -23,23 +25,16 @@ export type StrategyStatus = {
   isExistInPlugin: boolean
 }
 
-export const useStrategyInfo = (
-  strategyProviderName?: string,
-  strategyName?: string,
-) => {
-  const strategyProvider = useStrategyProviderDetail(
-    strategyProviderName || '',
-    { retry: false },
-  )
+export const useStrategyInfo = (strategyProviderName?: string, strategyName?: string) => {
+  const strategyProvider = useStrategyProviderDetail(strategyProviderName || '', { retry: false })
   const strategy = strategyProvider.data?.declaration.strategies.find(
-    str => str.identity.name === strategyName,
+    (str) => str.identity.name === strategyName,
   )
   const marketplace = useFetchPluginsInMarketPlaceByIds([strategyProviderName!], {
     retry: false,
   })
   const strategyStatus: StrategyStatus | undefined = useMemo(() => {
-    if (strategyProvider.isLoading || marketplace.isLoading)
-      return undefined
+    if (strategyProvider.isLoading || marketplace.isLoading) return undefined
     const strategyExist = !!strategy
     const isPluginInstalled = !strategyProvider.isError
     const isInMarketplace = !!marketplace.data?.data.plugins.at(0)
@@ -75,27 +70,40 @@ const useConfig = (id: string, payload: AgentNodeType) => {
     strategyStatus: currentStrategyStatus,
     strategy: currentStrategy,
     strategyProvider,
-  } = useStrategyInfo(
-    inputs.agent_strategy_provider_name,
-    inputs.agent_strategy_name,
-  )
+  } = useStrategyInfo(inputs.agent_strategy_provider_name, inputs.agent_strategy_name)
   const pluginId = inputs.agent_strategy_provider_name?.split('/').splice(0, 2).join('/')
   const pluginDetail = useCheckInstalled({
     pluginIds: [pluginId!],
     enabled: Boolean(pluginId),
   })
   const formData = useMemo(() => {
-    return Object.fromEntries(
-      Object.entries(inputs.agent_parameters || {}).map(([key, value]) => {
-        return [key, value.value]
-      }),
+    const paramNameList = (currentStrategy?.parameters || []).map((item) => item.name)
+    const res = Object.fromEntries(
+      Object.entries(inputs.agent_parameters || {})
+        .filter(([name]) => paramNameList.includes(name))
+        .map(([key, value]) => {
+          return [key, value.value]
+        }),
     )
-  }, [inputs.agent_parameters])
+    return res
+  }, [inputs.agent_parameters, currentStrategy?.parameters])
+
+  const getParamVarType = useCallback(
+    (paramName: string) => {
+      const isVariable = currentStrategy?.parameters.some(
+        (param) => param.name === paramName && param.type === FormTypeEnum.any,
+      )
+      if (isVariable) return VarType.variable
+      return VarType.constant
+    },
+    [currentStrategy?.parameters],
+  )
+
   const onFormChange = (value: Record<string, any>) => {
     const res: ToolVarInputs = {}
     Object.entries(value).forEach(([key, val]) => {
       res[key] = {
-        type: VarType.constant,
+        type: getParamVarType(key),
         value: val,
       }
     })
@@ -104,6 +112,54 @@ const useConfig = (id: string, payload: AgentNodeType) => {
       agent_parameters: res,
     })
   }
+
+  const formattingToolData = (data: any) => {
+    const settingValues = generateAgentToolValue(
+      data.settings,
+      toolParametersToFormSchemas(
+        data.schemas.filter((param: { form: string }) => param.form !== 'llm') as any,
+      ),
+    )
+    const paramValues = generateAgentToolValue(
+      data.parameters,
+      toolParametersToFormSchemas(
+        data.schemas.filter((param: { form: string }) => param.form === 'llm') as any,
+      ),
+      true,
+    )
+    const res = produce(data, (draft: any) => {
+      draft.settings = settingValues
+      draft.parameters = paramValues
+    })
+    return res
+  }
+
+  const formattingLegacyData = () => {
+    if (inputs.version || inputs.tool_node_version) return inputs
+    const newData = produce(inputs, (draft) => {
+      const schemas = currentStrategy?.parameters || []
+      Object.keys(draft.agent_parameters || {}).forEach((key) => {
+        const targetSchema = schemas.find((schema) => schema.name === key)
+        if (targetSchema?.type === FormTypeEnum.toolSelector)
+          draft.agent_parameters![key]!.value = formattingToolData(
+            draft.agent_parameters![key]!.value,
+          )
+        if (targetSchema?.type === FormTypeEnum.multiToolSelector)
+          draft.agent_parameters![key]!.value = draft.agent_parameters![key]!.value.map(
+            (tool: any) => formattingToolData(tool),
+          )
+      })
+      draft.tool_node_version = '2'
+    })
+    return newData
+  }
+
+  // formatting legacy data
+  useEffect(() => {
+    if (!currentStrategy) return
+    const newData = formattingLegacyData()
+    setInputs(newData)
+  }, [currentStrategy])
 
   // vars
 
@@ -121,68 +177,39 @@ const useConfig = (id: string, payload: AgentNodeType) => {
     ].includes(varPayload.type)
   }, [])
 
-  const {
-    availableVars,
-    availableNodesWithParent,
-  } = useAvailableVarList(id, {
+  const { availableVars, availableNodesWithParent } = useAvailableVarList(id, {
     onlyLeafNodeVar: false,
     filterVar: filterMemoryPromptVar,
   })
 
   // single run
-  const {
-    isShowSingleRun,
-    showSingleRun,
-    hideSingleRun,
-    toVarInputs,
-    runningStatus,
-    handleRun,
-    handleStop,
-    runInputData,
-    setRunInputData,
-    runResult,
-    getInputVars,
-  } = useOneStepRun<AgentNodeType>({
-    id,
-    data: inputs,
-    defaultRunInputData: {},
-  })
-  const allVarStrArr = (() => {
-    const arr = currentStrategy?.parameters.filter(item => item.type === 'string').map((item) => {
-      return formData[item.name]
-    }) || []
-
-    return arr
-  })()
-  const varInputs = (() => {
-    const vars = getInputVars(allVarStrArr)
-
-    return vars
-  })()
 
   const outputSchema = useMemo(() => {
     const res: any[] = []
-    if (!inputs.output_schema)
-      return []
+    if (!inputs.output_schema || !inputs.output_schema.properties) return []
     Object.keys(inputs.output_schema.properties).forEach((outputKey) => {
       const output = inputs.output_schema.properties[outputKey]
       res.push({
         name: outputKey,
-        type: output.type === 'array'
-          ? `Array[${output.items?.type.slice(0, 1).toLocaleUpperCase()}${output.items?.type.slice(1)}]`
-          : `${output.type.slice(0, 1).toLocaleUpperCase()}${output.type.slice(1)}`,
+        type:
+          output.type === 'array'
+            ? `Array[${output.items?.type ? output.items.type.slice(0, 1).toLocaleUpperCase() + output.items.type.slice(1) : 'Unknown'}]`
+            : `${output.type ? output.type.slice(0, 1).toLocaleUpperCase() + output.type.slice(1) : 'Unknown'}`,
         description: output.description,
       })
     })
     return res
   }, [inputs.output_schema])
 
-  const handleMemoryChange = useCallback((newMemory?: Memory) => {
-    const newInputs = produce(inputs, (draft) => {
-      draft.memory = newMemory
-    })
-    setInputs(newInputs)
-  }, [inputs, setInputs])
+  const handleMemoryChange = useCallback(
+    (newMemory?: Memory) => {
+      const newInputs = produce(inputs, (draft) => {
+        draft.memory = newMemory
+      })
+      setInputs(newInputs)
+    },
+    [inputs, setInputs],
+  )
   const isChatMode = useIsChatMode()
   return {
     readOnly,
@@ -198,18 +225,6 @@ const useConfig = (id: string, payload: AgentNodeType) => {
     pluginDetail: pluginDetail.data?.plugins.at(0),
     availableVars,
     availableNodesWithParent,
-
-    isShowSingleRun,
-    showSingleRun,
-    hideSingleRun,
-    toVarInputs,
-    runningStatus,
-    handleRun,
-    handleStop,
-    runInputData,
-    setRunInputData,
-    runResult,
-    varInputs,
     outputSchema,
     handleMemoryChange,
     isChatMode,

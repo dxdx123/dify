@@ -1,9 +1,10 @@
 from collections.abc import Generator, Sequence
-from typing import Any, Optional
+from typing import Any, override
 
 from core.agent.entities import AgentInvokeMessage
 from core.agent.plugin_entities import AgentStrategyEntity, AgentStrategyParameter
 from core.agent.strategy.base import BaseAgentStrategy
+from core.plugin.entities.request import InvokeCredentials, PluginInvokeContext
 from core.plugin.impl.agent import PluginAgentClient
 from core.plugin.utils.converter import convert_parameters_to_plugin_format
 
@@ -15,11 +16,14 @@ class PluginAgentStrategy(BaseAgentStrategy):
 
     tenant_id: str
     declaration: AgentStrategyEntity
+    meta_version: str | None = None
 
-    def __init__(self, tenant_id: str, declaration: AgentStrategyEntity):
+    def __init__(self, tenant_id: str, declaration: AgentStrategyEntity, meta_version: str | None):
         self.tenant_id = tenant_id
         self.declaration = declaration
+        self.meta_version = meta_version
 
+    @override
     def get_parameters(self) -> Sequence[AgentStrategyParameter]:
         return self.declaration.parameters
 
@@ -31,13 +35,15 @@ class PluginAgentStrategy(BaseAgentStrategy):
             params[parameter.name] = parameter.init_frontend_parameter(params.get(parameter.name))
         return params
 
+    @override
     def _invoke(
         self,
         params: dict[str, Any],
         user_id: str,
-        conversation_id: Optional[str] = None,
-        app_id: Optional[str] = None,
-        message_id: Optional[str] = None,
+        conversation_id: str | None = None,
+        app_id: str | None = None,
+        message_id: str | None = None,
+        credentials: InvokeCredentials | None = None,
     ) -> Generator[AgentInvokeMessage, None, None]:
         """
         Invoke the agent strategy.
@@ -56,4 +62,5 @@ class PluginAgentStrategy(BaseAgentStrategy):
             conversation_id=conversation_id,
             app_id=app_id,
             message_id=message_id,
+            context=PluginInvokeContext(credentials=credentials or InvokeCredentials()),
         )

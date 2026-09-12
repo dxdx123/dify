@@ -1,12 +1,17 @@
+import type { FormTypeEnum } from '../base/form/types'
 import type { CredentialFormSchemaBase } from '../header/account-setting/model-provider-page/declarations'
+import type { AutoUpdateConfig } from './reference-setting-modal/auto-update-setting/types'
+import type { TypeWithI18N } from '@/app/components/base/form/types'
 import type { ToolCredential } from '@/app/components/tools/types'
-import type { Locale } from '@/i18n'
-import type { AgentFeature } from '@/app/components/workflow/nodes/agent/types'
-export enum PluginType {
+import type { Locale } from '@/i18n-config'
+
+export enum PluginCategoryEnum {
   tool = 'tool',
   model = 'model',
   extension = 'extension',
   agent = 'agent-strategy',
+  datasource = 'datasource',
+  trigger = 'trigger',
 }
 
 export enum PluginSource {
@@ -16,7 +21,7 @@ export enum PluginSource {
   debugging = 'remote',
 }
 
-export type PluginToolDeclaration = {
+type PluginToolDeclaration = {
   identity: {
     author: string
     name: string
@@ -28,14 +33,15 @@ export type PluginToolDeclaration = {
   credentials_schema: ToolCredential[] // TODO
 }
 
-export type PluginEndpointDeclaration = {
+type PluginEndpointDeclaration = {
   settings: ToolCredential[]
-  endpoints: EndpointItem[]
+  endpoints?: EndpointItem[] | null
 }
 
-export type EndpointItem = {
+type EndpointItem = {
   path: string
   method: string
+  hidden?: boolean
 }
 
 export type EndpointListItem = {
@@ -53,7 +59,7 @@ export type EndpointListItem = {
   hook_id: string
 }
 
-export type PluginDeclarationMeta = {
+type PluginDeclarationMeta = {
   version: string
   minimum_dify_version?: string
 }
@@ -64,20 +70,110 @@ export type PluginDeclaration = {
   version: string
   author: string
   icon: string
+  icon_dark?: string
   name: string
-  category: PluginType
+  category: PluginCategoryEnum
   label: Record<Locale, string>
   description: Record<Locale, string>
   created_at: string
   resource: any // useless in frontend
   plugins: any // useless in frontend
   verified: boolean
-  endpoint: PluginEndpointDeclaration
-  tool: PluginToolDeclaration
+  endpoint?: PluginEndpointDeclaration | null
+  tool?: PluginToolDeclaration
+  datasource?: PluginToolDeclaration
   model: any
   tags: string[]
   agent_strategy: any
   meta: PluginDeclarationMeta
+  trigger: PluginTriggerDefinition
+}
+
+export type PluginTriggerSubscriptionConstructor = {
+  credentials_schema: CredentialsSchema[]
+  oauth_schema: OauthSchema
+  parameters: ParametersSchema[]
+}
+
+type PluginTriggerDefinition = {
+  events: TriggerEvent[]
+  identity: Identity
+  subscription_constructor: PluginTriggerSubscriptionConstructor
+  subscription_schema: ParametersSchema[]
+}
+
+type CredentialsSchema = {
+  name: string
+  label: Record<Locale, string>
+  description: Record<Locale, string>
+  type: FormTypeEnum
+  scope: any
+  required: boolean
+  default: any
+  options: any
+  help: Record<Locale, string>
+  url: string
+  placeholder: Record<Locale, string>
+}
+
+type OauthSchema = {
+  client_schema: CredentialsSchema[]
+  credentials_schema: CredentialsSchema[]
+}
+
+export type ParametersSchema = {
+  name: string
+  label: Record<Locale, string>
+  type: FormTypeEnum
+  auto_generate: any
+  template: any
+  scope: any
+  required: boolean
+  multiple: boolean
+  default?: string | string[]
+  min: any
+  max: any
+  precision: any
+  options?: Array<{
+    value: string
+    label: Record<Locale, string>
+    icon?: string
+  }>
+  description: Record<Locale, string>
+}
+
+export type TriggerEventParameter = {
+  name: string
+  label: TypeWithI18N
+  type: string
+  auto_generate: any
+  template: any
+  scope: any
+  required: boolean
+  multiple: boolean
+  default: any
+  min: any
+  max: any
+  precision: any
+  options?: Array<{
+    value: string
+    label: TypeWithI18N
+    icon?: string
+  }>
+  description?: TypeWithI18N
+}
+
+export type TriggerEvent = {
+  name: string
+  identity: {
+    author: string
+    name: string
+    label: TypeWithI18N
+    provider?: string
+  }
+  description: TypeWithI18N
+  parameters: TriggerEventParameter[]
+  output_schema: Record<string, any>
 }
 
 export type PluginManifestInMarket = {
@@ -86,14 +182,24 @@ export type PluginManifestInMarket = {
   org: string
   icon: string
   label: Record<Locale, string>
-  category: PluginType
+  category: PluginCategoryEnum
   version: string // combine the other place to it
   latest_version: string
   brief: Record<Locale, string>
   introduction: string
   verified: boolean
   install_count: number
-  badges: string[]
+  badges: string[] | null
+  verification: {
+    authorized_category: 'langgenius' | 'partner' | 'community'
+  }
+  from: Dependency['type']
+}
+
+export enum SupportedCreationMethods {
+  OAUTH = 'OAUTH',
+  APIKEY = 'APIKEY',
+  MANUAL = 'MANUAL',
 }
 
 export type PluginDetail = {
@@ -113,16 +219,21 @@ export type PluginDetail = {
   latest_unique_identifier: string
   source: PluginSource
   meta?: MetaData
-}
-
-export type PluginInfoFromMarketPlace = {
-  category: PluginType
-  latest_package_identifier: string
-  latest_version: string
+  status: 'active' | 'deleted'
+  deprecated_reason: string
+  alternative_plugin_id: string
 }
 
 export type Plugin = {
-  type: 'plugin' | 'bundle' | 'model' | 'extension' | 'tool' | 'agent_strategy'
+  type:
+    | 'plugin'
+    | 'bundle'
+    | 'model'
+    | 'extension'
+    | 'tool'
+    | 'agent_strategy'
+    | 'datasource'
+    | 'trigger'
   org: string
   author?: string
   name: string
@@ -131,20 +242,25 @@ export type Plugin = {
   latest_version: string
   latest_package_identifier: string
   icon: string
+  icon_dark?: string
   verified: boolean
-  label: Record<Locale, string>
-  brief: Record<Locale, string>
-  description: Record<Locale, string>
+  label: Partial<Record<Locale, string>>
+  brief: Partial<Record<Locale, string>>
+  description: Partial<Record<Locale, string>>
   // Repo readme.md content
   introduction: string
   repository: string
-  category: PluginType
+  category: PluginCategoryEnum
   install_count: number
   endpoint: {
     settings: CredentialFormSchemaBase[]
   }
   tags: { name: string }[]
-  badges: string[]
+  badges: string[] | null
+  verification: {
+    authorized_category: 'langgenius' | 'partner' | 'community'
+  }
+  from: Dependency['type']
 }
 
 export enum PermissionType {
@@ -158,12 +274,17 @@ export type Permissions = {
   debug_permission: PermissionType
 }
 
+export type ReferenceSetting = {
+  permission: Permissions
+  auto_upgrade: AutoUpdateConfig
+}
+
 export type UpdateFromMarketPlacePayload = {
-  category: PluginType
+  category: PluginCategoryEnum
   originalPackageInfo: {
     id: string
     payload: PluginDeclaration
-  },
+  }
   targetPackageInfo: {
     id: string
     version: string
@@ -182,14 +303,14 @@ export type UpdateFromGitHubPayload = {
 
 export type UpdatePluginPayload = {
   type: PluginSource
-  category: PluginType
+  category: PluginCategoryEnum
   marketPlace?: UpdateFromMarketPlacePayload
   github?: UpdateFromGitHubPayload
 }
 
 export type UpdatePluginModalType = UpdatePluginPayload & {
   onCancel: () => void
-  onSave: () => void
+  onSave: () => void | Promise<void>
 }
 
 export enum InstallStepFromGitHub {
@@ -216,10 +337,6 @@ export type GitHubUrlInfo = {
 }
 
 // endpoint
-export type EndpointOperationResponse = {
-  result: 'success' | 'error'
-}
-
 export type EndpointsResponse = {
   endpoints: EndpointListItem[]
   has_more: boolean
@@ -227,12 +344,6 @@ export type EndpointsResponse = {
   total: number
   page: number
 }
-export type UpdateEndpointRequest = {
-  endpoint_id: string
-  settings: Record<string, any>
-  name: string
-}
-
 export enum InstallStep {
   uploading = 'uploading',
   uploadFailed = 'uploadFailed',
@@ -242,7 +353,7 @@ export enum InstallStep {
   installFailed = 'failed',
 }
 
-export type GitHubAsset = {
+type GitHubAsset = {
   id: number
   name: string
   browser_download_url: string
@@ -254,19 +365,27 @@ export type GitHubRepoReleaseResponse = {
 }
 
 export type InstallPackageResponse = {
-  plugin_unique_identifier: string
+  plugin_unique_identifier?: string
   all_installed: boolean
   task_id: string
+  task?: PluginTaskStart
 }
 
 export type InstallStatusResponse = {
-  success: boolean,
+  status: TaskStatus
+  taskId: string
+  uniqueIdentifier: string
+}
+
+export type InstallStatus = {
+  success: boolean
   isFromMarketPlace?: boolean
 }
 
 export type updatePackageResponse = {
   all_installed: boolean
   task_id: string
+  task?: PluginTaskStart
 }
 
 export type uploadGitHubResponse = {
@@ -281,6 +400,7 @@ export type DebugInfo = {
 }
 
 export enum TaskStatus {
+  pending = 'pending',
   running = 'running',
   success = 'success',
   failed = 'failed',
@@ -289,6 +409,7 @@ export enum TaskStatus {
 export type PluginStatus = {
   plugin_unique_identifier: string
   plugin_id: string
+  source: PluginSource
   status: TaskStatus
   message: string
   icon: string
@@ -306,12 +427,12 @@ export type PluginTask = {
   plugins: PluginStatus[]
 }
 
-export type TaskStatusResponse = {
-  task: PluginTask
+export type PluginTaskStart = Omit<PluginTask, 'plugins'> & {
+  plugins: Array<Omit<PluginStatus, 'taskId'> & { taskId?: string }>
 }
 
-export type PluginTasksResponse = {
-  tasks: PluginTask[]
+export type TaskStatusResponse = {
+  task: PluginTask
 }
 
 export type MetaData = {
@@ -320,43 +441,12 @@ export type MetaData = {
   package: string
 }
 
-export type InstalledPluginListResponse = {
-  plugins: PluginDetail[]
-}
-
-export type InstalledLatestVersionResponse = {
-  versions: {
-    [plugin_id: string]: {
-      unique_identifier: string
-      version: string
-    } | null
-  }
-}
-
-export type UninstallPluginResponse = {
-  success: boolean
-}
-
-export type PluginsFromMarketplaceResponse = {
-  plugins: Plugin[]
-  bundles?: Plugin[]
-  total: number
-}
-export type PluginsFromMarketplaceByInfoResponse = {
-  list: {
-    plugin: Plugin
-    version: {
-      plugin_name: string
-      plugin_org: string
-      unique_identifier: string
-    }
-  }[]
-}
-
 export type GitHubItemAndMarketPlaceDependency = {
   type: 'github' | 'marketplace' | 'package'
   value: {
     repo?: string
+    organization?: string // from bundle marketplace dependency
+    plugin?: string // from bundle marketplace dependency
     version?: string // from app DSL
     package?: string // from app DSL
     release?: string // from local package. same to the version
@@ -377,7 +467,7 @@ export type PackageDependency = {
 
 export type Dependency = GitHubItemAndMarketPlaceDependency | PackageDependency
 
-export type Version = {
+type Version = {
   plugin_org: string
   plugin_name: string
   version: string
@@ -392,8 +482,8 @@ export type VersionListResponse = {
 }
 
 export type VersionInfo = {
-  installedId: string, // use to uninstall
-  installedVersion: string,
+  installedId: string // use to uninstall
+  installedVersion: string
   uniqueIdentifier: string
 }
 
@@ -415,7 +505,7 @@ export type StrategyParamItem = {
   options: any[]
   template: {
     enabled: boolean
-  },
+  }
   auto_generate: {
     type: string
   }
@@ -428,24 +518,37 @@ export type StrategyDetail = {
     icon: string
     label: Record<Locale, string>
     provider: string
-  },
+  }
   parameters: StrategyParamItem[]
   description: Record<Locale, string>
   output_schema: Record<string, any>
   features: AgentFeature[]
 }
 
-export type StrategyDeclaration = {
-  identity: {
-    author: string
-    name: string
-    description: Record<Locale, string>
-    icon: string
-    label: Record<Locale, string>
-    tags: string[]
-  },
+const AgentFeature = {
+  HISTORY_MESSAGES: 'history-messages',
+} as const
+
+type AgentFeature = (typeof AgentFeature)[keyof typeof AgentFeature]
+
+type Identity = {
+  author: string
+  name: string
+  label: Record<Locale, string>
+  description: Record<Locale, string>
+  icon: string
+  icon_dark?: string
+  tags: string[]
+}
+
+type StrategyDeclaration = {
+  identity: Identity
   plugin_id: string
   strategies: StrategyDetail[]
+}
+
+export type PluginMeta = {
+  version: string // the version of dify sdk
 }
 
 export type StrategyPluginDetail = {
@@ -453,4 +556,5 @@ export type StrategyPluginDetail = {
   plugin_unique_identifier: string
   plugin_id: string
   declaration: StrategyDeclaration
+  meta: PluginMeta
 }

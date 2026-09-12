@@ -1,11 +1,14 @@
 import logging
-from typing import Any
+from pathlib import Path
+from typing import Any, override
 
 from pydantic.fields import FieldInfo
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, TomlConfigSettingsSource
+
+from libs.file_utils import search_file_upwards
 
 from .deploy import DeploymentConfig
-from .enterprise import EnterpriseFeatureConfig
+from .enterprise import EnterpriseFeatureConfig, EnterpriseTelemetryConfig
 from .extra import ExtraServiceConfig
 from .feature import FeatureConfig
 from .middleware import MiddlewareConfig
@@ -22,9 +25,11 @@ class RemoteSettingsSourceFactory(PydanticBaseSettingsSource):
     def __init__(self, settings_cls: type[BaseSettings]):
         super().__init__(settings_cls)
 
+    @override
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         raise NotImplementedError
 
+    @override
     def __call__(self) -> dict[str, Any]:
         current_state = self.current_state
         remote_source_name = current_state.get("REMOTE_SETTINGS_SOURCE_NAME")
@@ -38,7 +43,7 @@ class RemoteSettingsSourceFactory(PydanticBaseSettingsSource):
             case RemoteSettingsSourceName.NACOS:
                 remote_source = NacosSettingsSource(current_state)
             case _:
-                logger.warning(f"Unsupported remote source: {remote_source_name}")
+                logger.warning("Unsupported remote source: %s", remote_source_name)
                 return {}
 
         d: dict[str, Any] = {}
@@ -70,6 +75,8 @@ class DifyConfig(
     # Enterprise feature configs
     # **Before using, please contact business@dify.ai by email to inquire about licensing matters.**
     EnterpriseFeatureConfig,
+    # Enterprise telemetry configs
+    EnterpriseTelemetryConfig,
 ):
     model_config = SettingsConfigDict(
         # read from dotenv format config file
@@ -85,6 +92,7 @@ class DifyConfig(
     # Thanks for your concentration and consideration.
 
     @classmethod
+    @override
     def settings_customise_sources(
         cls,
         settings_cls: type[BaseSettings],
@@ -99,4 +107,12 @@ class DifyConfig(
             RemoteSettingsSourceFactory(settings_cls),
             dotenv_settings,
             file_secret_settings,
+            TomlConfigSettingsSource(
+                settings_cls=settings_cls,
+                toml_file=search_file_upwards(
+                    base_dir_path=Path(__file__).parent,
+                    target_file_name="pyproject.toml",
+                    max_search_parent_depth=2,
+                ),
+            ),
         )

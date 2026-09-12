@@ -1,19 +1,53 @@
 from collections.abc import Sequence
+from typing import Any
+
+from requests import HTTPError
 
 from core.plugin.entities.bundle import PluginBundleDependency
 from core.plugin.entities.plugin import (
-    GenericProviderID,
     MissingPluginDependency,
+    PluginCategory,
     PluginDeclaration,
     PluginEntity,
     PluginInstallation,
     PluginInstallationSource,
 )
-from core.plugin.entities.plugin_daemon import PluginInstallTask, PluginInstallTaskStartResponse, PluginUploadResponse
+from core.plugin.entities.plugin_daemon import (
+    PluginDecodeResponse,
+    PluginInstalledIdsDaemonResponse,
+    PluginInstallTask,
+    PluginInstallTaskStartResponse,
+    PluginListResponse,
+    PluginListWithoutTotalResponse,
+    PluginReadmeResponse,
+)
 from core.plugin.impl.base import BasePluginClient
+from models.provider_ids import GenericProviderID
 
 
 class PluginInstaller(BasePluginClient):
+    def fetch_plugin_readme(self, tenant_id: str, plugin_unique_identifier: str, language: str) -> str:
+        """
+        Fetch plugin readme
+        """
+        try:
+            response = self._request_with_plugin_daemon_response(
+                "GET",
+                f"plugin/{tenant_id}/management/fetch/readme",
+                PluginReadmeResponse,
+                params={
+                    "tenant_id": tenant_id,
+                    "plugin_unique_identifier": plugin_unique_identifier,
+                    "language": language,
+                },
+            )
+            return response.content
+        except HTTPError as e:
+            message = e.args[0]
+            if "404" in message:
+                return ""
+            raise e
+
     def fetch_plugin_by_identifier(
         self,
         tenant_id: str,
@@ -27,11 +61,55 @@ class PluginInstaller(BasePluginClient):
         )
 
     def list_plugins(self, tenant_id: str) -> list[PluginEntity]:
+        result = self._request_with_plugin_daemon_response(
+            "GET",
+            f"plugin/{tenant_id}/management/list",
+            PluginListResponse,
+            params={"page": 1, "page_size": 256, "response_type": "paged"},
+        )
+        return result.list
+
+    def list_installed_plugin_ids(self, tenant_id: str, category: PluginCategory) -> list[str]:
+        """List all currently installed plugin IDs in one category."""
+        result = self._request_with_plugin_daemon_response(
+            "GET",
+            f"plugin/{tenant_id}/management/installation/ids",
+            PluginInstalledIdsDaemonResponse,
+            params={"category": category.value},
+        )
+        return result.plugin_ids
+
+    def list_plugins_with_total(self, tenant_id: str, page: int, page_size: int) -> PluginListResponse:
         return self._request_with_plugin_daemon_response(
             "GET",
             f"plugin/{tenant_id}/management/list",
-            list[PluginEntity],
-            params={"page": 1, "page_size": 256},
+            PluginListResponse,
+            params={"page": page, "page_size": page_size, "response_type": "paged"},
+        )
+
+    def list_plugins_by_category(
+        self,
+        tenant_id: str,
+        category: PluginCategory,
+        page: int,
+        page_size: int,
+        *,
+        query: str = "",
+        tags: Sequence[str] = (),
+        language: str = "en_US",
+    ) -> PluginListWithoutTotalResponse:
+        return self._request_with_plugin_daemon_response(
+            "GET",
+            f"plugin/{tenant_id}/management/{category.value}/list",
+            PluginListWithoutTotalResponse,
+            params={
+                "page": page,
+                "page_size": page_size,
+                "response_type": "paged",
+                "query": query,
+                "tags": list(tags),
+                "language": language,
+            },
         )
 
     def upload_pkg(
@@ -39,7 +117,7 @@ class PluginInstaller(BasePluginClient):
         tenant_id: str,
         pkg: bytes,
         verify_signature: bool = False,
-    ) -> PluginUploadResponse:
+    ) -> PluginDecodeResponse:
         """
         Upload a plugin package and return the plugin unique identifier.
         """
@@ -54,7 +132,7 @@ class PluginInstaller(BasePluginClient):
         return self._request_with_plugin_daemon_response(
             "POST",
             f"plugin/{tenant_id}/management/install/upload/package",
-            PluginUploadResponse,
+            PluginDecodeResponse,
             files=body,
             data=data,
         )
@@ -162,6 +240,20 @@ class PluginInstaller(BasePluginClient):
             params={"plugin_unique_identifier": plugin_unique_identifier},
         )
 
+    def decode_plugin_from_identifier(self, tenant_id: str, plugin_unique_identifier: str) -> PluginDecodeResponse:
+        """
+        Decode a plugin from an identifier.
+        """
+        return self._request_with_plugin_daemon_response(
+            "GET",
+            f"plugin/{tenant_id}/management/decode/from_identifier",
+            PluginDecodeResponse,
+            params={
+                "plugin_unique_identifier": plugin_unique_identifier,
+                "PluginUniqueIdentifier": plugin_unique_identifier,  # compat with daemon <= 0.5.4
+            },
+        )
+
     def fetch_plugin_installation_by_ids(
         self, tenant_id: str, plugin_ids: Sequence[str]
     ) -> Sequence[PluginInstallation]:
@@ -210,7 +302,7 @@ class PluginInstaller(BasePluginClient):
         original_plugin_unique_identifier: str,
         new_plugin_unique_identifier: str,
         source: PluginInstallationSource,
-        meta: dict,
+        meta: dict[str, Any],
     ) -> PluginInstallTaskStartResponse:
         """
         Upgrade a plugin.

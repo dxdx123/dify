@@ -1,84 +1,102 @@
-import type { Viewport } from 'next'
-import RoutePrefixHandle from './routePrefixHandle'
-import I18nServer from './components/i18n-server'
-import BrowserInitor from './components/browser-initor'
-import SentryInitor from './components/sentry-initor'
-import { getLocaleOnServer } from '@/i18n/server'
-import { TanstackQueryIniter } from '@/context/query-client'
+import type { ThemeProviderProps } from 'next-themes'
+import type { Metadata, Viewport } from '@/next'
+import { ToastHost } from '@langgenius/dify-ui/toast'
+import { TooltipProvider } from '@langgenius/dify-ui/tooltip'
+import { HydrationBoundary } from '@tanstack/react-query'
+import { Provider as JotaiProvider } from 'jotai/react'
 import { ThemeProvider } from 'next-themes'
+import { NuqsAdapter } from 'nuqs/adapters/next/app'
+import { IS_PROD } from '@/config'
+import { getDatasetMap } from '@/env'
+import { SystemFeaturesBootstrapBoundary } from '@/features/system-features/bootstrap-boundary'
+import {
+  dehydrateSystemFeatures,
+  getOptionalSystemFeatures,
+} from '@/features/system-features/server'
+import { getLocaleOnServer } from '@/i18n-config/server'
+import { headers } from '@/next/headers'
+import { getApplicationTitle } from '@/utils/document-title'
+import { basePath } from '@/utils/var'
+import { CloudAnalytics } from './components/base/analytics-consent/cloud-analytics'
+import { PartnerStackCookieRecorder } from './components/billing/partner-stack/cookie-recorder'
+import { AgentationLoader } from './components/devtools/agentation-loader'
+import { ReactScanLoader } from './components/devtools/react-scan/loader'
+import { I18nServerProvider } from './components/provider/i18n-server'
+import { TanStackQueryProvider } from './query-provider'
+import '@/service/console/server'
 import './styles/globals.css'
-import './styles/markdown.scss'
-
-export const metadata = {
-  title: 'Dify',
-}
+import './styles/markdown.css'
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
   viewportFit: 'cover',
-  userScalable: false,
 }
 
-const LocaleLayout = async ({
-  children,
-}: {
-  children: React.ReactNode
-}) => {
-  const locale = await getLocaleOnServer()
+export async function generateMetadata(): Promise<Metadata> {
+  const systemFeatures = await getOptionalSystemFeatures()
+  const branding = systemFeatures?.branding
+  const applicationTitle = getApplicationTitle(branding)
+  const brandedFavicon = branding?.enabled ? branding.favicon : undefined
+
+  return {
+    title: {
+      default: applicationTitle,
+      template: `%s - ${applicationTitle}`,
+    },
+    icons: brandedFavicon
+      ? { icon: brandedFavicon, apple: brandedFavicon }
+      : { icon: `${basePath}/favicon.ico` },
+  }
+}
+
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const datasetMap = getDatasetMap()
+  const [locale, requestHeaders] = await Promise.all([
+    getLocaleOnServer(),
+    headers(),
+    getOptionalSystemFeatures(),
+  ])
+  const dehydratedState = dehydrateSystemFeatures()
+  const nonce = IS_PROD ? (requestHeaders.get('x-nonce') ?? undefined) : undefined
+  const themeProviderProps: Omit<ThemeProviderProps, 'children'> = {
+    attribute: 'data-theme',
+    defaultTheme: 'system',
+    enableSystem: true,
+    disableTransitionOnChange: true,
+  }
+  if (nonce !== undefined) themeProviderProps.nonce = nonce
 
   return (
     <html lang={locale ?? 'en'} className="h-full" suppressHydrationWarning>
       <head>
-        <meta name="theme-color" content="#FFFFFF" />
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <ReactScanLoader />
       </head>
-      <body
-        className="color-scheme h-full select-auto"
-        data-api-prefix={process.env.NEXT_PUBLIC_API_PREFIX}
-        data-pubic-api-prefix={process.env.NEXT_PUBLIC_PUBLIC_API_PREFIX}
-        data-marketplace-api-prefix={process.env.NEXT_PUBLIC_MARKETPLACE_API_PREFIX}
-        data-marketplace-url-prefix={process.env.NEXT_PUBLIC_MARKETPLACE_URL_PREFIX}
-        data-public-edition={process.env.NEXT_PUBLIC_EDITION}
-        data-public-support-mail-login={process.env.NEXT_PUBLIC_SUPPORT_MAIL_LOGIN}
-        data-public-sentry-dsn={process.env.NEXT_PUBLIC_SENTRY_DSN}
-        data-public-maintenance-notice={process.env.NEXT_PUBLIC_MAINTENANCE_NOTICE}
-        data-public-site-about={process.env.NEXT_PUBLIC_SITE_ABOUT}
-        data-public-text-generation-timeout-ms={process.env.NEXT_PUBLIC_TEXT_GENERATION_TIMEOUT_MS}
-        data-public-max-tools-num={process.env.NEXT_PUBLIC_MAX_TOOLS_NUM}
-        data-public-max-parallel-limit={process.env.NEXT_PUBLIC_MAX_PARALLEL_LIMIT}
-        data-public-top-k-max-value={process.env.NEXT_PUBLIC_TOP_K_MAX_VALUE}
-        data-public-indexing-max-segmentation-tokens-length={process.env.NEXT_PUBLIC_INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH}
-        data-public-loop-node-max-count={process.env.NEXT_PUBLIC_LOOP_NODE_MAX_COUNT}
-        data-public-max-iterations-num={process.env.NEXT_PUBLIC_MAX_ITERATIONS_NUM}
-        data-public-enable-website-jinareader={process.env.NEXT_PUBLIC_ENABLE_WEBSITE_JINAREADER}
-        data-public-enable-website-firecrawl={process.env.NEXT_PUBLIC_ENABLE_WEBSITE_FIRECRAWL}
-        data-public-enable-website-watercrawl={process.env.NEXT_PUBLIC_ENABLE_WEBSITE_WATERCRAWL}
-      >
-        <BrowserInitor>
-          <SentryInitor>
-            <TanstackQueryIniter>
-              <ThemeProvider
-                attribute='data-theme'
-                forcedTheme='light'
-                defaultTheme='light' // TODO: change to 'system' when dark mode ready
-                enableSystem
-                disableTransitionOnChange
-              >
-                <I18nServer>
-                  {children}
-                </I18nServer>
-              </ThemeProvider>
-            </TanstackQueryIniter>
-          </SentryInitor>
-        </BrowserInitor>
-        <RoutePrefixHandle />
+      <body className="h-full bg-background-body" {...datasetMap}>
+        <CloudAnalytics />
+        <div className="isolate h-full">
+          <JotaiProvider>
+            <ThemeProvider {...themeProviderProps}>
+              <NuqsAdapter>
+                <TanStackQueryProvider>
+                  <HydrationBoundary state={dehydratedState}>
+                    <I18nServerProvider>
+                      <ToastHost timeout={5000} limit={3} />
+                      <SystemFeaturesBootstrapBoundary>
+                        <PartnerStackCookieRecorder />
+                        <TooltipProvider delay={300} closeDelay={200}>
+                          {children}
+                        </TooltipProvider>
+                      </SystemFeaturesBootstrapBoundary>
+                    </I18nServerProvider>
+                  </HydrationBoundary>
+                </TanStackQueryProvider>
+              </NuqsAdapter>
+            </ThemeProvider>
+          </JotaiProvider>
+          <AgentationLoader />
+        </div>
       </body>
     </html>
   )
 }
-
-export default LocaleLayout

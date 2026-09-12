@@ -5,5 +5,5 @@ class WorkSpaceNotAllowedCreateError(BaseServiceError):
     pass
 
 
-class WorkSpaceNotFoundError(BaseServiceError):
+class WorkspacesLimitExceededError(BaseServiceError):
     pass

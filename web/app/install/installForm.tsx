@@ -1,184 +1,217 @@
 'use client'
-import React, { useCallback, useEffect } from 'react'
-import { useTranslation } from 'react-i18next'
-import { useDebounceFn } from 'ahooks'
-
-import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-
-import type { SubmitHandler } from 'react-hook-form'
-import { useForm } from 'react-hook-form'
-import { z } from 'zod'
-import { zodResolver } from '@hookform/resolvers/zod'
-import Loading from '../components/base/loading'
-import classNames from '@/utils/classnames'
-import Button from '@/app/components/base/button'
-
-import { fetchInitValidateStatus, fetchSetupStatus, setup } from '@/service/common'
 import type { InitValidateStatusResponse, SetupStatusResponse } from '@/models/common'
-import { basePath } from '@/utils/var'
+import { zPostSetupBody } from '@dify/contracts/api/console/setup/zod.gen'
+import { Button } from '@langgenius/dify-ui/button'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+  FieldValidity,
+} from '@langgenius/dify-ui/field'
+import { Form } from '@langgenius/dify-ui/form'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import { Input } from '@langgenius/dify-ui/input'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@langgenius/dify-ui/input-group'
+import { useQueryClient } from '@tanstack/react-query'
+import * as React from 'react'
+import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
+import * as z from 'zod'
+import { validPassword } from '@/config'
+import { LICENSE_LINK } from '@/constants/link'
+import useDocumentTitle from '@/hooks/use-document-title'
+import Link from '@/next/link'
+import { useRouter } from '@/next/navigation'
+import { fetchInitValidateStatus, fetchSetupStatus, login, setup } from '@/service/common'
+import { consoleQuery } from '@/service/console'
+import { encryptPassword as encodePassword } from '@/utils/encryption'
+import Loading from '../components/base/loading'
 
-const validPassword = /^(?=.*[a-zA-Z])(?=.*\d).{8,}$/
-
-const accountFormSchema = z.object({
-  email: z
-    .string()
-    .min(1, { message: 'login.error.emailInValid' })
-    .email('login.error.emailInValid'),
-  name: z.string().min(1, { message: 'login.error.nameEmpty' }),
-  password: z.string().min(8, {
-    message: 'login.error.passwordLengthInValid',
-  }).regex(validPassword, 'login.error.passwordInvalid'),
+const accountFormSchema = zPostSetupBody.pick({ email: true, name: true, password: true }).extend({
+  email: zPostSetupBody.shape.email.pipe(z.email()),
+  name: zPostSetupBody.shape.name.min(1),
+  password: zPostSetupBody.shape.password.min(8).regex(validPassword),
 })
 
 type AccountFormValues = z.infer<typeof accountFormSchema>
 
 const InstallForm = () => {
-  const { t } = useTranslation()
-  const router = useRouter()
+  const { t, i18n } = useTranslation()
+  const pageTitle = t(($) => $.setAdminAccount, { ns: 'login' })
+  useDocumentTitle(pageTitle)
+  const { push, replace } = useRouter()
+  const queryClient = useQueryClient()
   const [showPassword, setShowPassword] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<AccountFormValues>({
-    resolver: zodResolver(accountFormSchema),
-    defaultValues: {
-      name: '',
-      password: '',
-      email: '',
-    },
-  })
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
 
-  const onSubmit: SubmitHandler<AccountFormValues> = async (data) => {
-    await setup({
-      body: {
-        ...data,
-      },
-    })
-    router.push('/signin')
-  }
-
-  const handleSetting = async () => {
+  const handleSubmit = async (value: AccountFormValues) => {
     if (isSubmitting) return
-    handleSubmit(onSubmit)()
-  }
 
-  const { run: debouncedHandleKeyDown } = useDebounceFn(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        handleSetting()
+    setIsSubmitting(true)
+    try {
+      // First, setup the admin account
+      await setup({
+        body: {
+          ...value,
+          language: i18n.language,
+        },
+      })
+
+      // Then, automatically login with the same credentials
+      const loginRes = await login({
+        url: '/login',
+        body: {
+          email: value.email,
+          password: encodePassword(value.password),
+        },
+      })
+
+      // Store tokens and redirect if login successful
+      if (loginRes.result === 'success') {
+        await queryClient.resetQueries({ queryKey: consoleQuery.account.profile.get.key() })
+        replace('/')
+      } else {
+        // Fallback to signin page if auto-login fails
+        replace('/signin')
       }
-    },
-    { wait: 200 },
-  )
-
-  const handleKeyDown = useCallback(debouncedHandleKeyDown, [debouncedHandleKeyDown])
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   useEffect(() => {
     fetchSetupStatus().then((res: SetupStatusResponse) => {
       if (res.step === 'finished') {
-        localStorage.setItem('setup_status', 'finished')
-        router.push(`${basePath}/signin`)
-      }
-      else {
+        push('/signin')
+      } else {
         fetchInitValidateStatus().then((res: InitValidateStatusResponse) => {
-          if (res.status === 'not_started')
-            router.push(`${basePath}/init`)
+          if (res.status === 'not_started') push('/init')
         })
       }
       setLoading(false)
     })
-  }, [])
+  }, [push])
 
-  return (
-    loading
-      ? <Loading />
-      : <>
-        <div className="sm:mx-auto sm:w-full sm:max-w-md">
-          <h2 className="text-[32px] font-bold text-text-primary">{t('login.setAdminAccount')}</h2>
-          <p className='mt-1 text-sm text-text-secondary'>{t('login.setAdminAccountDesc')}</p>
-        </div>
-        <div className="mt-8 grow sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="relative">
-            <form onSubmit={handleSubmit(onSubmit)} onKeyDown={handleKeyDown}>
-              <div className='mb-5'>
-                <label htmlFor="email" className="my-2 flex items-center justify-between text-sm font-medium text-text-primary">
-                  {t('login.email')}
-                </label>
-                <div className="mt-1 rounded-md shadow-sm">
-                  <input
-                    {...register('email')}
-                    placeholder={t('login.emailPlaceholder') || ''}
-                    className={'w-full appearance-none rounded-md border border-transparent bg-components-input-bg-normal py-[7px] pl-2 text-components-input-text-filled caret-primary-600 outline-none placeholder:text-components-input-text-placeholder hover:border-components-input-border-hover hover:bg-components-input-bg-hover focus:border-components-input-border-active focus:bg-components-input-bg-active focus:shadow-xs'}
-                  />
-                  {errors.email && <span className='text-sm text-red-400'>{t(`${errors.email?.message}`)}</span>}
-                </div>
+  return loading ? (
+    <Loading />
+  ) : (
+    <>
+      <div className="sm:mx-auto sm:w-full sm:max-w-md">
+        <h1 className="text-[32px] font-bold text-text-primary">{pageTitle}</h1>
+        <p className="mt-1 text-sm text-text-secondary">
+          {t(($) => $.setAdminAccountDesc, { ns: 'login' })}
+        </p>
+      </div>
+      <div className="mt-8 grow sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="relative">
+          <Form<AccountFormValues> onFormSubmit={(value) => void handleSubmit(value)}>
+            <Field
+              name="email"
+              validate={(value) =>
+                accountFormSchema.shape.email.safeParse(value).success
+                  ? null
+                  : t(($) => $['error.emailInValid'], { ns: 'login' })
+              }
+              className="mb-5"
+            >
+              <FieldLabel>{t(($) => $.email, { ns: 'login' })}</FieldLabel>
+              <Input
+                type="email"
+                autoComplete="email"
+                spellCheck={false}
+                required
+                placeholder={t(($) => $.emailPlaceholder, { ns: 'login' }) || ''}
+              />
+              <FieldError>{t(($) => $['error.emailInValid'], { ns: 'login' })}</FieldError>
+            </Field>
 
-              </div>
+            <Field
+              name="name"
+              validate={(value) =>
+                accountFormSchema.shape.name.safeParse(value).success
+                  ? null
+                  : t(($) => $['error.nameEmpty'], { ns: 'login' })
+              }
+              className="mb-5"
+            >
+              <FieldLabel>{t(($) => $.name, { ns: 'login' })}</FieldLabel>
+              <Input
+                autoComplete="name"
+                required
+                maxLength={30}
+                placeholder={t(($) => $.namePlaceholder, { ns: 'login' }) || ''}
+              />
+              <FieldError>{t(($) => $['error.nameEmpty'], { ns: 'login' })}</FieldError>
+            </Field>
 
-              <div className='mb-5'>
-                <label htmlFor="name" className="my-2 flex items-center justify-between text-sm font-medium text-text-primary">
-                  {t('login.name')}
-                </label>
-                <div className="relative mt-1 rounded-md shadow-sm">
-                  <input
-                    {...register('name')}
-                    placeholder={t('login.namePlaceholder') || ''}
-                    className={'w-full appearance-none rounded-md border border-transparent bg-components-input-bg-normal py-[7px] pl-2 text-components-input-text-filled caret-primary-600 outline-none placeholder:text-components-input-text-placeholder hover:border-components-input-border-hover hover:bg-components-input-bg-hover focus:border-components-input-border-active focus:bg-components-input-bg-active focus:shadow-xs'}
-                  />
-                </div>
-                {errors.name && <span className='text-sm text-red-400'>{t(`${errors.name.message}`)}</span>}
-              </div>
+            <Field
+              name="password"
+              validate={(value) =>
+                accountFormSchema.shape.password.safeParse(value).success
+                  ? null
+                  : t(($) => $['error.passwordInvalid'], { ns: 'login' })
+              }
+              className="mb-5"
+            >
+              <FieldLabel>{t(($) => $.password, { ns: 'login' })}</FieldLabel>
+              <InputGroup>
+                <InputGroupInput
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  required
+                  minLength={8}
+                  placeholder={t(($) => $.passwordPlaceholder, { ns: 'login' }) || ''}
+                />
+                <InputGroupAddon align="inline-end">
+                  <IconButton
+                    aria-label={t(($) => $[showPassword ? 'hidePassword' : 'showPassword'], {
+                      ns: 'login',
+                    })}
+                    onClick={() => setShowPassword((visible) => !visible)}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={showPassword ? 'i-ri-eye-off-line size-4' : 'i-ri-eye-line size-4'}
+                    />
+                  </IconButton>
+                </InputGroupAddon>
+              </InputGroup>
+              <FieldValidity>
+                {({ validity }) =>
+                  validity.valid === false ? null : (
+                    <FieldDescription className="text-text-secondary">
+                      {t(($) => $['error.passwordInvalid'], { ns: 'login' })}
+                    </FieldDescription>
+                  )
+                }
+              </FieldValidity>
+              <FieldError>{t(($) => $['error.passwordInvalid'], { ns: 'login' })}</FieldError>
+            </Field>
 
-              <div className='mb-5'>
-                <label htmlFor="password" className="my-2 flex items-center justify-between text-sm font-medium text-text-primary">
-                  {t('login.password')}
-                </label>
-                <div className="relative mt-1 rounded-md shadow-sm">
-                  <input
-                    {...register('password')}
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder={t('login.passwordPlaceholder') || ''}
-                    className={'w-full appearance-none rounded-md border border-transparent bg-components-input-bg-normal py-[7px] pl-2 text-components-input-text-filled caret-primary-600 outline-none placeholder:text-components-input-text-placeholder hover:border-components-input-border-hover hover:bg-components-input-bg-hover focus:border-components-input-border-active focus:bg-components-input-bg-active focus:shadow-xs'}
-                  />
-
-                  <div className="absolute inset-y-0 right-0 flex items-center pr-3">
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="text-text-quaternary hover:text-text-tertiary focus:text-text-tertiary focus:outline-none"
-                    >
-                      {showPassword ? '👀' : '😝'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className={classNames('mt-1 text-xs text-text-tertiary', {
-                  'text-red-400 !text-sm': errors.password,
-                })}>{t('login.error.passwordInvalid')}</div>
-              </div>
-
-              <div>
-                <Button variant='primary' className='w-full' onClick={handleSetting}>
-                  {t('login.installBtn')}
-                </Button>
-              </div>
-            </form>
-            <div className="mt-2 block w-full text-xs text-text-tertiary">
-              {t('login.license.tip')}
-              &nbsp;
-              <Link
-                className='text-text-accent'
-                target='_blank' rel='noopener noreferrer'
-                href={'https://docs.dify.ai/user-agreement/open-source'}
-              >{t('login.license.link')}</Link>
+            <div>
+              <Button variant="primary" type="submit" loading={isSubmitting} className="w-full">
+                {t(($) => $.installBtn, { ns: 'login' })}
+              </Button>
             </div>
+          </Form>
+          <div className="mt-2 block w-full text-xs text-text-secondary">
+            {t(($) => $['license.tip'], { ns: 'login' })}
+            &nbsp;
+            <Link
+              className="text-text-accent"
+              target="_blank"
+              rel="noopener noreferrer"
+              href={LICENSE_LINK}
+            >
+              {t(($) => $['license.link'], { ns: 'login' })}
+            </Link>
           </div>
         </div>
-      </>
+      </div>
+    </>
   )
 }
 

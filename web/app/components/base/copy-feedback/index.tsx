@@ -1,91 +1,57 @@
 'use client'
-import React, { useState } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
+import { useClipboard } from 'foxact/use-clipboard'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  RiClipboardFill,
-  RiClipboardLine,
-} from '@remixicon/react'
-import { debounce } from 'lodash-es'
-import copy from 'copy-to-clipboard'
-import copyStyle from './style.module.css'
-import Tooltip from '@/app/components/base/tooltip'
-import ActionButton from '@/app/components/base/action-button'
 
-type Props = {
+type CopyFeedbackProps = Readonly<{
   content: string
   className?: string
-}
+  copiedLabel?: string
+  copyLabel?: string
+  onCopyError?: () => void
+}>
 
-const prefixEmbedded = 'appOverview.overview.appInfo.embedded'
+const prefixEmbedded = 'overview.appInfo.embedded'
 
-const CopyFeedback = ({ content }: Props) => {
+export function CopyFeedback({
+  content,
+  className,
+  copiedLabel,
+  copyLabel,
+  onCopyError,
+}: CopyFeedbackProps) {
   const { t } = useTranslation()
-  const [isCopied, setIsCopied] = useState<boolean>(false)
+  // Rely on useClipboard's own timer to flip `copied` back to false so the
+  // "Copied" tooltip stays visible long enough to be read, matching the
+  // KeyValueItem pattern. Do NOT reset on mouse leave.
+  const { copied, copy } = useClipboard({ timeout: 2000, onCopyError })
 
-  const onClickCopy = debounce(() => {
+  const tooltipText = copied
+    ? (copiedLabel ?? t(($) => $[`${prefixEmbedded}.copied`], { ns: 'appOverview' }))
+    : (copyLabel ?? t(($) => $[`${prefixEmbedded}.copy`], { ns: 'appOverview' }))
+  /* v8 ignore next -- i18n test mock always returns a non-empty string; runtime fallback is defensive. -- @preserve */
+  const safeText = tooltipText || ''
+
+  const handleCopy = useCallback(() => {
     copy(content)
-    setIsCopied(true)
-  }, 100)
-
-  const onMouseLeave = debounce(() => {
-    setIsCopied(false)
-  }, 100)
+  }, [copy, content])
 
   return (
-    <Tooltip
-      popupContent={
-        (isCopied
-          ? t(`${prefixEmbedded}.copied`)
-          : t(`${prefixEmbedded}.copy`)) || ''
-      }
-    >
-      <ActionButton>
-        <div
-          onClick={onClickCopy}
-          onMouseLeave={onMouseLeave}
-        >
-          {isCopied && <RiClipboardFill className='h-4 w-4' />}
-          {!isCopied && <RiClipboardLine className='h-4 w-4' />}
-        </div>
-      </ActionButton>
-    </Tooltip>
-  )
-}
-
-export default CopyFeedback
-
-export const CopyFeedbackNew = ({ content, className }: Pick<Props, 'className' | 'content'>) => {
-  const { t } = useTranslation()
-  const [isCopied, setIsCopied] = useState<boolean>(false)
-
-  const onClickCopy = debounce(() => {
-    copy(content)
-    setIsCopied(true)
-  }, 100)
-
-  const onMouseLeave = debounce(() => {
-    setIsCopied(false)
-  }, 100)
-
-  return (
-    <Tooltip
-      popupContent={
-        (isCopied
-          ? t(`${prefixEmbedded}.copied`)
-          : t(`${prefixEmbedded}.copy`)) || ''
-      }
-    >
-      <div
-        className={`h-8 w-8 cursor-pointer rounded-lg hover:bg-components-button-ghost-bg-hover ${className ?? ''
-        }`}
-      >
-        <div
-          onClick={onClickCopy}
-          onMouseLeave={onMouseLeave}
-          className={`h-full w-full ${copyStyle.copyIcon} ${isCopied ? copyStyle.copied : ''
-          }`}
-        ></div>
-      </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <IconButton aria-label={safeText} className={className} onClick={handleCopy}>
+            <span
+              aria-hidden="true"
+              className={cn('size-4', copied ? 'i-ri-clipboard-fill' : 'i-ri-clipboard-line')}
+            />
+          </IconButton>
+        }
+      />
+      <TooltipContent>{safeText}</TooltipContent>
     </Tooltip>
   )
 }

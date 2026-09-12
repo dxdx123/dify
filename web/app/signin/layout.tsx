@@ -1,21 +1,32 @@
+'use client'
+import { cn } from '@langgenius/dify-ui/cn'
+import { useSuspenseQuery } from '@tanstack/react-query'
+import { systemFeaturesQueryOptions } from '@/features/system-features/client'
 import Header from './_header'
 
-import cn from '@/utils/classnames'
-
-export default async function SignInLayout({ children }: any) {
-  return <>
-    <div className={cn('flex min-h-screen w-full justify-center bg-background-default-burn p-6')}>
-      <div className={cn('flex w-full shrink-0 flex-col rounded-2xl border border-effects-highlight bg-background-default-subtle')}>
-        <Header />
-        <div className={cn('flex w-full grow flex-col items-center justify-center px-6 md:px-[108px]')}>
-          <div className='flex flex-col md:w-[400px]'>
-            {children}
-          </div>
-        </div>
-        <div className='system-xs-regular px-8 py-6 text-text-tertiary'>
-          © {new Date().getFullYear()} LangGenius, Inc. All rights reserved.
+export default function SignInLayout({ children }: any) {
+  const { data: systemFeatures } = useSuspenseQuery(systemFeaturesQueryOptions())
+  return (
+    <>
+      <div className={cn('flex min-h-screen w-full justify-center bg-background-default-burn p-6')}>
+        <div
+          className={cn(
+            'flex w-full min-w-0 flex-col items-center rounded-2xl border border-effects-highlight bg-background-default-subtle',
+          )}
+        >
+          <Header />
+          <main
+            className={cn('flex w-full grow flex-col items-center justify-center px-6 md:px-27')}
+          >
+            <div className="flex w-full flex-col md:w-100">{children}</div>
+          </main>
+          {systemFeatures.branding.enabled === false && (
+            <footer className="px-8 py-6 system-xs-regular text-text-tertiary">
+              © {new Date().getFullYear()} LangGenius, Inc. All rights reserved.
+            </footer>
+          )}
         </div>
       </div>
-    </div>
-  </>
+    </>
+  )
 }
